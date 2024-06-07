@@ -45,6 +45,7 @@ library(reshape)
 ```{r}
 # Applying PCA
 df_scaled <- scale(df)
+df_scaled <- df_scaled[,!(colnames(df_scaled) %in% c("income","star_ratings"))]
 df_pca <- prcomp(df_scaled)
 summary(df_pca)
 ```
@@ -97,21 +98,21 @@ pca_reduced[pca_reduced$variable %in% c("PC5","PC6","PC7","PC8"),] %>%
 
 Results:
 
--   PCA1 - $$ low $$ values of menu options, star ratings and income
+-   PCA1 - In contrast of $$ low $$ values of social media engagement and advertising to high unemployment rate, economic rate, and average income.
 
--   PCA2 - In contrast of $$ low $$ menu options and star ratings to $$ high $$ social media engagement
+-   PCA2 - $$ low $$ values of features related to holistic employment growth and competitor factors.
 
--   PCA3 - In contrast of $$ low $$ competitor related reviews/info to $$ high $$ weather/temperature
+-   PCA3 - $$ high $$ values of features related to employee growth and weather conditions.
 
--   PCA4 - In contrast of $$ low $$ menu diversity and ratings to $$ high $$ rates of unemployment and economy
+-   PCA4 - $$ high $$ values of features related to competitor factors and weather conditions.
 
--   PCA5 - $$ high $$ values for weather events, pricing, temperature and competitor reviews.
+-   PCA5 - In contrast of $$ high $$ values for inventory turnover, staff turn over and order processing time to $$ low $$ values of restaurant's value for money and promos.
 
--   PCA6 - In contrast of $$low$$ social media/advertising engagement to $$ high $$ order time/staff turnover rate.
+-   PCA6 - $$ high $$ values for variety of products (ie. vegetarian) and accessibility.
 
--   PCA7 - $$low$$ values for quality of neighborhood, competitor reviews/density and accessibility
+-   PCA7 - In contrast of $$low$$ values for unemployment & economic growth rate, and average income to variety of products including seasonality.
 
--   PCA8 - In contrast of $$ low $$ employee satisfaction, training and experience to $$high$$ competitor reviews/promos
+-   PCA8 - In contrast of $$ low $$ values of variety of products together with seasonal promos to $$high$$ employee satisfactory performance/growth.
 
 ## Clustering reduced data
 
