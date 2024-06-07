@@ -1,0 +1,129 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+df <- read.csv('../data/restaurants_train.csv')
+head(df,5)
+```
+
+```{r}
+str(df)
+```
+
+```{r}
+print('Count of missing NAs')
+sapply(df, function(x) sum(is.na(x)))
+```
+
+## Using PCA on high-dimensional data
+
+Given the data set we have, we have a large number of features and we want to apply an unsupervised method to determine insights. PCA simplifies the features into fewer components to help us visualize hidden patterns in our data.
+
+Identifying if the data is spherical?
+
+```{r}
+corrMatrix <- cor(df)
+psych::cortest.bartlett(corrMatrix)
+```
+
+Since p-value \< 0.05, we reject the $$H_0$$ that the data is spherical.
+
+```{r}
+# install.packages('reshape','psych','factoextra')
+library(factoextra)
+library(psych)
+library(reshape)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(reshape)
+
+```
+
+```{r}
+# Applying PCA
+df_scaled <- scale(df)
+df_pca <- prcomp(df_scaled)
+summary(df_pca)
+```
+
+As observed, we have a large number of PCA components that have been generated from the data. Our next step is to determine what PCA component's explains most of the variance of our data.
+
+```{r}
+# PCA Variance ratio
+pca_summary <- summary(df_pca)
+cumulative_varprop <- pca_summary$importance["Cumulative Proportion",]
+# Visual
+barplot(cumulative_varprop)
+abline(h=0.80, col = 'red', lty = 2)
+title(main = "PCA explained variance ratio",
+      xlab = "PCA components", ylab = "Variance Ratio")
+```
+
+As observed, we generated 32 PCA components and 85% of the variance by PCA1 - PCA9. Since a large portion of our variance is observed in these components, we can now reduce the components into 9 and perform some analysis. It will be hard to include all the components since some of the them have low explained variance specially on the right most PCA's which may not be that significant.
+
+```{r}
+# PCA Loadings
+pca_loadings <- data.frame(features=row.names(df_pca$rotation),df_pca$rotation) 
+
+pca_reduced <- 
+  melt(pca_loadings,id=c("features")) %>%
+    filter(variable %in% paste0('PC',1:8)) %>%
+    group_by(variable) %>%
+    top_n(5,abs(value)) %>% 
+    ungroup() %>%
+    mutate(sign = ifelse(value>0, "+", "-"))
+
+
+pca_reduced[pca_reduced$variable %in% c("PC1","PC2","PC3","PC4"),] %>%
+  ggplot(aes(x=abs(value),y=features,fill=sign)) + 
+  geom_bar(stat='identity') +
+  facet_wrap(~variable, scales='free_y') +
+  theme_classic() +
+  labs(x=NULL)
+
+```
+
+```{r}
+pca_reduced[pca_reduced$variable %in% c("PC5","PC6","PC7","PC8"),] %>%
+  ggplot(aes(x=abs(value),y=features,fill=sign)) + 
+  geom_bar(stat='identity') +
+  facet_wrap(~variable, scales='free_y') +
+  theme_classic() +
+  labs(x=NULL)
+```
+
+Results:
+
+-   PCA1 - $$ low $$ values of menu options, star ratings and income
+
+-   PCA2 - In contrast of $$ low $$ menu options and star ratings to $$ high $$ social media engagement
+
+-   PCA3 - In contrast of $$ low $$ competitor related reviews/info to $$ high $$ weather/temperature
+
+-   PCA4 - In contrast of $$ low $$ menu diversity and ratings to $$ high $$ rates of unemployment and economy
+
+-   PCA5 - $$ high $$ values for weather events, pricing, temperature and competitor reviews.
+
+-   PCA6 - In contrast of $$low$$ social media/advertising engagement to $$ high $$ order time/staff turnover rate.
+
+-   PCA7 - $$low$$ values for quality of neighborhood, competitor reviews/density and accessibility
+
+-   PCA8 - In contrast of $$ low $$ employee satisfaction, training and experience to $$high$$ competitor reviews/promos
+
+## Clustering reduced data
+
+Using PCA to reduced the dimensionality and determine importance of features in generated Principal Components, we can now try to use this in clustering. Using clustering in reduced dimensions may give us another insights on how these PC's relate.
+
+```{r}
+reduced_col <- c("PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8")
+pca_components <- df_pca[['x']][,colnames(df_pca[['x']]) %in% reduced_col]
+kmcluster <- kmeans(pca_components,
+                    centers = 5, nstart =25)
+fviz_cluster(kmcluster,pca_components[])
+
+```
+
+As observed, distinct clusters can't be visualized according to the visualization shown above.
