@@ -1,0 +1,875 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(keras)
+```
+
+## Model Building: Neural Networks
+
+This notebook aims to build neural networks from the restaurant training dataset. Specifically, it will aim to create two models that will predict the star rating and income of a restaurant, respectively. The models will use two sets of different features:
+
+1.  **Set 1:** All features
+2.  **Set 2:** Principal components based from the raw features set
+
+## Principal Component Analysis
+
+This section will focus on getting the principal components from the raw features set.
+
+```{r}
+resto_train <- read.csv('restaurants-project-ml/data/restaurants_train.csv')
+```
+
+```{r}
+head(resto_train)
+```
+
+```{r}
+feats <- resto_train %>%
+  select(-income, -star_ratings)
+norm_feats <- scale(feats)
+```
+
+```{r}
+df_pca <- prcomp(norm_feats)
+summary(df_pca)
+```
+
+```{r}
+# PCA Variance ratio
+pca_summary <- summary(df_pca)
+cumulative_varprop <- pca_summary$importance["Cumulative Proportion",]
+
+# Data visualization
+barplot(cumulative_varprop)
+abline(h=0.90, col = 'red', lty = 2)
+title(main = "PCA explained variance ratio",
+      xlab = "PCA components", ylab = "Variance Ratio")
+```
+
+From the graph, we can see that as we reach principal component 10, we already have a cumulative variance ratio of 90.68%, which means we already have principal components containing around 90% of the information from the raw feature set. Hence, we will only use **10 principal components**.
+
+```{r}
+# Extract only the 10 principal component scores
+pca_scores <- df_pca$x[, 1:10]
+head(pca_scores)
+```
+
+## Model Building for Predicting Star Ratings
+
+This section will highlight the model development phase, using neural networks, for predicting the star rating of a restaurant.
+
+### A. Set 1: All Features
+
+```{r}
+x_train <- as.matrix(feats)
+y_train <- resto_train$star_ratings
+```
+
+```{r}
+# Parameters to be cross-validated
+neurons <- c(50, 100, 200, 500)
+hl_no <- c(1, 2, 3)
+activation <- c('relu', 'sigmoid', 'tanh')
+```
+
+```{r}
+# Function to build the model
+build_model <- function(neurons, hidden_layers, activation) {
+  model <- keras_model_sequential()
+  model %>%
+    layer_dense(units = neurons, activation = activation, input_shape = 30) %>%
+    layer_dropout(rate = 0.4)
+  
+  if (hidden_layers > 1) {
+    for (i in 2:hidden_layers) {
+      model %>%
+        layer_dense(units = neurons, activation = activation) %>%
+        layer_dropout(rate = 0.3)
+    }
+  }
+  
+  model %>%
+    layer_dense(units = 5, activation = 'softmax')
+  
+  model %>% compile(
+    loss = 'categorical_crossentropy',
+    optimizer = 'adam',
+    metrics = c('accuracy')
+  )
+  
+  return(model)
+}
+```
+
+```{r}
+# Function to perform 5-fold cross-validation
+cv_nn <- function(neurons, hidden_layers, activation, x_train, y_train) {
+  num_folds <- 5
+  fold_size <- floor(nrow(x_train) / num_folds)
+  accuracies <- numeric(num_folds)
+  
+  for (i in 1:num_folds) {
+    # Prepare training and validation data for this fold
+    val_idx <- ((i - 1) * fold_size + 1):(i * fold_size)
+    x_val_fold <- x_train[val_idx, ]
+    y_val_fold <- y_train[val_idx]
+    
+    train_idx <- setdiff(1:nrow(x_train), val_idx)
+    x_train_fold <- x_train[train_idx, ]
+    y_train_fold <- y_train[train_idx]
+    
+    # Convert integer labels to categorical one-hot encoding
+    y_train_fold <- to_categorical(y_train_fold - 1, num_classes = 5)
+    y_val_fold <- to_categorical(y_val_fold - 1, num_classes = 5)
+    
+    # Build and train the model for this fold
+    model <- build_model(neurons, hidden_layers, activation)
+    history <- model %>% fit(
+      x_train_fold, y_train_fold,
+      epochs = 20, batch_size = 200,
+      validation_data = list(x_val_fold, y_val_fold),
+      verbose = 1
+    )
+    
+    # Record the validation accuracy for this fold
+    accuracies[i] <- max(history$metrics$val_accuracy)
+  }
+  
+  # Return the mean validation accuracy across all folds
+  return(mean(accuracies))
+}
+```
+
+```{r}
+# Dataframe containing the cross validation results
+results <- data.frame(
+  neurons = integer(),
+  hidden_layers = integer(),
+  activation = character(),
+  val_accuracy = double()
+)
+```
+
+```{r}
+# Grid search proper
+for (neurons in neurons) {
+  for (hidden_layers in hl_no) {
+    for (activation in activation) {
+      val_accuracy <- cv_nn(neurons, hidden_layers, activation, x_train, y_train)
+      results <- rbind(results, data.frame(
+        neurons = neurons,
+        hidden_layers = hidden_layers,
+        activation = activation,
+        val_accuracy = val_accuracy
+      ))
+    }
+  }
+}
+```
+
+```{r}
+results
+```
+
+```{r}
+results[which.max(results$val_accuracy),]
+```
+
+This section is just for trying to optimize the model further (if able).
+
+```{r}
+# Parameters to be cross-validated
+neurons <- c(1000)
+hl_no <- c(4)
+activation <- c('relu', 'sigmoid', 'tanh')
+
+# Function to build the model
+build_model <- function(neurons, hidden_layers, activation) {
+  model <- keras_model_sequential()
+  model %>%
+    layer_dense(units = neurons, activation = activation, input_shape = 30) %>%
+    layer_dropout(rate = 0.4)
+  
+  if (hidden_layers > 1) {
+    for (i in 2:hidden_layers) {
+      model %>%
+        layer_dense(units = neurons, activation = activation) %>%
+        layer_dropout(rate = 0.3)
+    }
+  }
+  
+  model %>%
+    layer_dense(units = 5, activation = 'softmax')
+  
+  model %>% compile(
+    loss = 'categorical_crossentropy',
+    optimizer = 'adam',
+    metrics = c('accuracy')
+  )
+  
+  return(model)
+}
+
+# Function to perform 5-fold cross-validation
+cv_nn <- function(neurons, hidden_layers, activation, x_train, y_train) {
+  num_folds <- 5
+  fold_size <- floor(nrow(x_train) / num_folds)
+  accuracies <- numeric(num_folds)
+  
+  for (i in 1:num_folds) {
+    # Prepare training and validation data for this fold
+    val_idx <- ((i - 1) * fold_size + 1):(i * fold_size)
+    x_val_fold <- x_train[val_idx, ]
+    y_val_fold <- y_train[val_idx]
+    
+    train_idx <- setdiff(1:nrow(x_train), val_idx)
+    x_train_fold <- x_train[train_idx, ]
+    y_train_fold <- y_train[train_idx]
+    
+    # Convert integer labels to categorical one-hot encoding
+    y_train_fold <- to_categorical(y_train_fold - 1, num_classes = 5)
+    y_val_fold <- to_categorical(y_val_fold - 1, num_classes = 5)
+    
+    # Build and train the model for this fold
+    model <- build_model(neurons, hidden_layers, activation)
+    history <- model %>% fit(
+      x_train_fold, y_train_fold,
+      epochs = 50, batch_size = 200,
+      validation_data = list(x_val_fold, y_val_fold),
+      verbose = 1
+    )
+    
+    # Record the validation accuracy for this fold
+    accuracies[i] <- max(history$metrics$val_accuracy)
+  }
+  
+  # Return the mean validation accuracy across all folds
+  return(mean(accuracies))
+}
+
+# Dataframe containing the cross validation results
+results <- data.frame(
+  neurons = integer(),
+  hidden_layers = integer(),
+  activation = character(),
+  val_accuracy = double()
+)
+
+# Grid search proper
+for (neurons in neurons) {
+  for (hidden_layers in hl_no) {
+    for (activation in activation) {
+      val_accuracy <- cv_nn(neurons, hidden_layers, activation, x_train, y_train)
+      results <- rbind(results, data.frame(
+        neurons = neurons,
+        hidden_layers = hidden_layers,
+        activation = activation,
+        val_accuracy = val_accuracy
+      ))
+    }
+  }
+}
+```
+
+```{r}
+results[which.max(results$val_accuracy),]
+```
+
+### B. Set 2: Principal Components
+
+```{r}
+x_train <- as.matrix(pca_scores)
+```
+
+```{r}
+# Function to build the model
+build_model <- function(neurons, hidden_layers, activation) {
+  model <- keras_model_sequential()
+  model %>%
+    layer_dense(units = neurons, activation = activation, input_shape = 10) %>%
+    layer_dropout(rate = 0.4)
+  
+  if (hidden_layers > 1) {
+    for (i in 2:hidden_layers) {
+      model %>%
+        layer_dense(units = neurons, activation = activation) %>%
+        layer_dropout(rate = 0.3)
+    }
+  }
+  
+  model %>%
+    layer_dense(units = 5, activation = 'softmax')
+  
+  model %>% compile(
+    loss = 'categorical_crossentropy',
+    optimizer = 'adam',
+    metrics = c('accuracy')
+  )
+  
+  return(model)
+}
+```
+
+```{r}
+# Grid search proper
+for (neurons in neurons) {
+  for (hidden_layers in hl_no) {
+    for (activation in activation) {
+      val_accuracy <- cv_nn(neurons, hidden_layers, activation, x_train, y_train)
+      results <- rbind(results, data.frame(
+        neurons = neurons,
+        hidden_layers = hidden_layers,
+        activation = activation,
+        val_accuracy = val_accuracy
+      ))
+    }
+  }
+}
+```
+
+```{r}
+results
+```
+
+```{r}
+results[which.max(results$val_accuracy),]
+```
+
+Again, this section is meant for some additional tuning in the hopes of further improving the model.
+
+```{r}
+# Parameters to be cross-validated
+neurons <- c(1000)
+hl_no <- c(3,4)
+activation <- c('relu', 'sigmoid', 'tanh')
+
+# Function to build the model
+build_model <- function(neurons, hidden_layers, activation) {
+  model <- keras_model_sequential()
+  model %>%
+    layer_dense(units = neurons, activation = activation, input_shape = 10) %>%
+    layer_dropout(rate = 0.4)
+  
+  if (hidden_layers > 1) {
+    for (i in 2:hidden_layers) {
+      model %>%
+        layer_dense(units = neurons, activation = activation) %>%
+        layer_dropout(rate = 0.3)
+    }
+  }
+  
+  model %>%
+    layer_dense(units = 5, activation = 'softmax')
+  
+  model %>% compile(
+    loss = 'categorical_crossentropy',
+    optimizer = 'adam',
+    metrics = c('accuracy')
+  )
+  
+  return(model)
+}
+
+# Function to perform 5-fold cross-validation
+cv_nn <- function(neurons, hidden_layers, activation, x_train, y_train) {
+  num_folds <- 5
+  fold_size <- floor(nrow(x_train) / num_folds)
+  accuracies <- numeric(num_folds)
+  
+  for (i in 1:num_folds) {
+    # Prepare training and validation data for this fold
+    val_idx <- ((i - 1) * fold_size + 1):(i * fold_size)
+    x_val_fold <- x_train[val_idx, ]
+    y_val_fold <- y_train[val_idx]
+    
+    train_idx <- setdiff(1:nrow(x_train), val_idx)
+    x_train_fold <- x_train[train_idx, ]
+    y_train_fold <- y_train[train_idx]
+    
+    # Convert integer labels to categorical one-hot encoding
+    y_train_fold <- to_categorical(y_train_fold - 1, num_classes = 5)
+    y_val_fold <- to_categorical(y_val_fold - 1, num_classes = 5)
+    
+    # Build and train the model for this fold
+    model <- build_model(neurons, hidden_layers, activation)
+    history <- model %>% fit(
+      x_train_fold, y_train_fold,
+      epochs = 30, batch_size = 200,
+      validation_data = list(x_val_fold, y_val_fold),
+      verbose = 1
+    )
+    
+    # Record the validation accuracy for this fold
+    accuracies[i] <- max(history$metrics$val_accuracy)
+  }
+  
+  # Return the mean validation accuracy across all folds
+  return(mean(accuracies))
+}
+
+# Dataframe containing the cross validation results
+results <- data.frame(
+  neurons = integer(),
+  hidden_layers = integer(),
+  activation = character(),
+  val_accuracy = double()
+)
+
+# Grid search proper
+for (neurons in neurons) {
+  for (hidden_layers in hl_no) {
+    for (activation in activation) {
+      val_accuracy <- cv_nn(neurons, hidden_layers, activation, x_train, y_train)
+      results <- rbind(results, data.frame(
+        neurons = neurons,
+        hidden_layers = hidden_layers,
+        activation = activation,
+        val_accuracy = val_accuracy
+      ))
+    }
+  }
+}
+```
+
+```{r}
+results[which.max(results$val_accuracy),]
+```
+
+## Model Building for Predicting Income
+
+This section will highlight the model development phase, using neural networks, for predicting the income of a restaurant.
+
+### A. Set 1: All Features
+
+```{r}
+x_train <- as.matrix(feats)
+y_train <- resto_train$income
+```
+
+```{r}
+# Parameters to be cross-validated
+neurons <- c(50, 100, 200, 500)
+hl_no <- c(1, 2, 3)
+activation <- c('relu', 'sigmoid', 'tanh')
+```
+
+```{r}
+# Function to build the model
+build_model <- function(neurons, hidden_layers, activation) {
+  model <- keras_model_sequential()
+  
+  model %>%
+    layer_dense(units = neurons, activation = activation, input_shape = 30) %>%
+    layer_dropout(rate = 0.4)
+  
+  if (hidden_layers > 1) {
+    for (i in 2:hidden_layers) {
+      model %>%
+        layer_dense(units = neurons, activation = activation) %>%
+        layer_dropout(rate = 0.3)
+    }
+  }
+
+  model %>%
+    layer_dense(units = neurons, activation = 'relu') %>%
+    layer_dropout(rate = 0.6) %>%
+    layer_dense(units = 1)
+  
+  model %>% compile(
+    loss = 'mse',
+    optimizer = 'adam',
+    metrics = list('mean_squared_error', 'mean_absolute_error', 'mean_absolute_percentage_error')
+  )
+  
+  return(model)
+}
+```
+
+```{r}
+# Function to perform 5-fold cross-validation
+cv_nn <- function(neurons, hidden_layers, activation, x_train, y_train) {
+  num_folds <- 5
+  fold_size <- floor(nrow(x_train) / num_folds)
+  mse_list <- numeric(num_folds)
+  mae_list <- numeric(num_folds)
+  mape_list <- numeric(num_folds)
+  
+  for (i in 1:num_folds) {
+    # Prepare training and validation data for this fold
+    val_idx <- ((i - 1) * fold_size + 1):(i * fold_size)
+    x_val_fold <- x_train[val_idx, ]
+    y_val_fold <- y_train[val_idx]
+    
+    train_idx <- setdiff(1:nrow(x_train), val_idx)
+    x_train_fold <- x_train[train_idx, ]
+    y_train_fold <- y_train[train_idx]
+    
+    # Build and train the model for this fold
+    model <- build_model(neurons, hidden_layers, activation)
+    history <- model %>% fit(
+      x_train_fold, y_train_fold,
+      epochs = 20, batch_size = 200,
+      validation_data = list(x_val_fold, y_val_fold),
+      verbose = 1
+    )
+    
+    # Record the regression metrics for this fold
+    mse_list[i] <- max(history$metrics$mean_squared_error)
+    mae_list[i] <- max(history$metrics$mean_absolute_error)
+    mape_list[i] <- max(history$metrics$mean_absolute_percentage_error)
+  }
+  
+  # Return the mean of all regression metrics across all folds
+  mean_mse <- mean(mse_list)
+  mean_mae <- mean(mae_list)
+  mean_mape <- mean(mape_list)
+    
+  return(c(mean_mse, mean_mae, mean_mape))
+}
+```
+
+```{r}
+# Dataframe containing the cross validation results
+results <- data.frame(
+  neurons = integer(),
+  hidden_layers = integer(),
+  activation = character(),
+  val_mse = double(),
+  val_mae = double(),
+  val_mape = double()
+)
+```
+
+```{r}
+# Grid search proper
+for (neurons in neurons) {
+  for (hidden_layers in hl_no) {
+    for (activation in activation) {
+      cv_results <- cv_nn(neurons, hidden_layers, activation, x_train, y_train)
+      results <- rbind(results, data.frame(
+        neurons = neurons,
+        hidden_layers = hidden_layers,
+        activation = activation,
+        val_mse = cv_results[1],
+        val_mae = cv_results[2],
+        val_mape = cv_results[3]
+      ))
+    }
+  }
+}
+```
+
+```{r}
+results
+```
+
+```{r}
+results[which.min(results$val_mae),]
+```
+
+```{r}
+# Parameters to be cross-validated
+neurons <- c(1000)
+hl_no <- c(4)
+activation <- c('relu', 'sigmoid', 'tanh')
+
+# Function to build the model
+build_model <- function(neurons, hidden_layers, activation) {
+  model <- keras_model_sequential()
+  
+  model %>%
+    layer_dense(units = neurons, activation = activation, input_shape = 30) %>%
+    layer_dropout(rate = 0.4)
+  
+  if (hidden_layers > 1) {
+    for (i in 2:hidden_layers) {
+      model %>%
+        layer_dense(units = neurons, activation = activation) %>%
+        layer_dropout(rate = 0.3)
+    }
+  }
+
+  model %>%
+    layer_dense(units = neurons, activation = 'relu') %>%
+    layer_dropout(rate = 0.6) %>%
+    layer_dense(units = 1)
+  
+  model %>% compile(
+    loss = 'mse',
+    optimizer = 'adam',
+    metrics = list('mean_squared_error', 'mean_absolute_error', 'mean_absolute_percentage_error')
+  )
+  
+  return(model)
+}
+
+# Function to perform 5-fold cross-validation
+cv_nn <- function(neurons, hidden_layers, activation, x_train, y_train) {
+  num_folds <- 5
+  fold_size <- floor(nrow(x_train) / num_folds)
+  mse_list <- numeric(num_folds)
+  mae_list <- numeric(num_folds)
+  mape_list <- numeric(num_folds)
+  
+  for (i in 1:num_folds) {
+    # Prepare training and validation data for this fold
+    val_idx <- ((i - 1) * fold_size + 1):(i * fold_size)
+    x_val_fold <- x_train[val_idx, ]
+    y_val_fold <- y_train[val_idx]
+    
+    train_idx <- setdiff(1:nrow(x_train), val_idx)
+    x_train_fold <- x_train[train_idx, ]
+    y_train_fold <- y_train[train_idx]
+    
+    # Build and train the model for this fold
+    model <- build_model(neurons, hidden_layers, activation)
+    history <- model %>% fit(
+      x_train_fold, y_train_fold,
+      epochs = 40, batch_size = 200,
+      validation_data = list(x_val_fold, y_val_fold),
+      verbose = 1
+    )
+    
+    # Record the regression metrics for this fold
+    mse_list[i] <- max(history$metrics$mean_squared_error)
+    mae_list[i] <- max(history$metrics$mean_absolute_error)
+    mape_list[i] <- max(history$metrics$mean_absolute_percentage_error)
+  }
+  
+  # Return the mean of all regression metrics across all folds
+  mean_mse <- mean(mse_list)
+  mean_mae <- mean(mae_list)
+  mean_mape <- mean(mape_list)
+    
+  return(c(mean_mse, mean_mae, mean_mape))
+}
+
+# Dataframe containing the cross validation results
+results <- data.frame(
+  neurons = integer(),
+  hidden_layers = integer(),
+  activation = character(),
+  val_mse = double(),
+  val_mae = double(),
+  val_mape = double()
+)
+
+# Grid search proper
+for (neurons in neurons) {
+  for (hidden_layers in hl_no) {
+    for (activation in activation) {
+      cv_results <- cv_nn(neurons, hidden_layers, activation, x_train, y_train)
+      results <- rbind(results, data.frame(
+        neurons = neurons,
+        hidden_layers = hidden_layers,
+        activation = activation,
+        val_mse = cv_results[1],
+        val_mae = cv_results[2],
+        val_mape = cv_results[3]
+      ))
+    }
+  }
+}
+```
+
+```{r}
+results[which.min(results$val_mae),]
+```
+
+### B. Set 2: Principal Components
+
+```{r}
+x_train <- as.matrix(pca_scores)
+```
+
+```{r}
+# Parameters to be cross-validated
+neurons <- c(50, 100, 200, 500)
+hl_no <- c(1, 2, 3)
+activation <- c('relu', 'sigmoid', 'tanh')
+```
+
+```{r}
+# Function to build the model
+build_model <- function(neurons, hidden_layers, activation) {
+  model <- keras_model_sequential()
+  
+  model %>%
+    layer_dense(units = neurons, activation = activation, input_shape = 10) %>%
+    layer_dropout(rate = 0.4)
+  
+  if (hidden_layers > 1) {
+    for (i in 2:hidden_layers) {
+      model %>%
+        layer_dense(units = neurons, activation = activation) %>%
+        layer_dropout(rate = 0.3)
+    }
+  }
+
+  model %>%
+    layer_dense(units = neurons, activation = 'relu') %>%
+    layer_dropout(rate = 0.6) %>%
+    layer_dense(units = 1)
+  
+  model %>% compile(
+    loss = 'mse',
+    optimizer = 'adam',
+    metrics = list('mean_squared_error', 'mean_absolute_error', 'mean_absolute_percentage_error')
+  )
+  
+  return(model)
+}
+```
+
+```{r}
+# Dataframe containing the cross validation results
+results <- data.frame(
+  neurons = integer(),
+  hidden_layers = integer(),
+  activation = character(),
+  val_mse = double(),
+  val_mae = double(),
+  val_mape = double()
+)
+```
+
+```{r}
+# Grid search proper
+for (neurons in neurons) {
+  for (hidden_layers in hl_no) {
+    for (activation in activation) {
+      cv_results <- cv_nn(neurons, hidden_layers, activation, x_train, y_train)
+      results <- rbind(results, data.frame(
+        neurons = neurons,
+        hidden_layers = hidden_layers,
+        activation = activation,
+        val_mse = cv_results[1],
+        val_mae = cv_results[2],
+        val_mape = cv_results[3]
+      ))
+    }
+  }
+}
+```
+
+```{r}
+results
+```
+
+```{r}
+results[which.min(results$val_mae),]
+```
+
+```{r}
+# Parameters to be cross-validated
+neurons <- c(1000)
+hl_no <- c(4)
+activation <- c('relu', 'sigmoid', 'tanh')
+
+# Function to build the model
+build_model <- function(neurons, hidden_layers, activation) {
+  model <- keras_model_sequential()
+  
+  model %>%
+    layer_dense(units = neurons, activation = activation, input_shape = 10) %>%
+    layer_dropout(rate = 0.4)
+  
+  if (hidden_layers > 1) {
+    for (i in 2:hidden_layers) {
+      model %>%
+        layer_dense(units = neurons, activation = activation) %>%
+        layer_dropout(rate = 0.3)
+    }
+  }
+
+  model %>%
+    layer_dense(units = neurons, activation = 'relu') %>%
+    layer_dropout(rate = 0.6) %>%
+    layer_dense(units = 1)
+  
+  model %>% compile(
+    loss = 'mse',
+    optimizer = 'adam',
+    metrics = list('mean_squared_error', 'mean_absolute_error', 'mean_absolute_percentage_error')
+  )
+  
+  return(model)
+}
+
+# Function to perform 5-fold cross-validation
+cv_nn <- function(neurons, hidden_layers, activation, x_train, y_train) {
+  num_folds <- 5
+  fold_size <- floor(nrow(x_train) / num_folds)
+  mse_list <- numeric(num_folds)
+  mae_list <- numeric(num_folds)
+  mape_list <- numeric(num_folds)
+  
+  for (i in 1:num_folds) {
+    # Prepare training and validation data for this fold
+    val_idx <- ((i - 1) * fold_size + 1):(i * fold_size)
+    x_val_fold <- x_train[val_idx, ]
+    y_val_fold <- y_train[val_idx]
+    
+    train_idx <- setdiff(1:nrow(x_train), val_idx)
+    x_train_fold <- x_train[train_idx, ]
+    y_train_fold <- y_train[train_idx]
+    
+    # Build and train the model for this fold
+    model <- build_model(neurons, hidden_layers, activation)
+    history <- model %>% fit(
+      x_train_fold, y_train_fold,
+      epochs = 40, batch_size = 200,
+      validation_data = list(x_val_fold, y_val_fold),
+      verbose = 1
+    )
+    
+    # Record the regression metrics for this fold
+    mse_list[i] <- max(history$metrics$mean_squared_error)
+    mae_list[i] <- max(history$metrics$mean_absolute_error)
+    mape_list[i] <- max(history$metrics$mean_absolute_percentage_error)
+  }
+  
+  # Return the mean of all regression metrics across all folds
+  mean_mse <- mean(mse_list)
+  mean_mae <- mean(mae_list)
+  mean_mape <- mean(mape_list)
+    
+  return(c(mean_mse, mean_mae, mean_mape))
+}
+
+# Dataframe containing the cross validation results
+results <- data.frame(
+  neurons = integer(),
+  hidden_layers = integer(),
+  activation = character(),
+  val_mse = double(),
+  val_mae = double(),
+  val_mape = double()
+)
+
+# Grid search proper
+for (neurons in neurons) {
+  for (hidden_layers in hl_no) {
+    for (activation in activation) {
+      cv_results <- cv_nn(neurons, hidden_layers, activation, x_train, y_train)
+      results <- rbind(results, data.frame(
+        neurons = neurons,
+        hidden_layers = hidden_layers,
+        activation = activation,
+        val_mse = cv_results[1],
+        val_mae = cv_results[2],
+        val_mape = cv_results[3]
+      ))
+    }
+  }
+}
+```
+
+```{r}
+results[which.min(results$val_mae),]
+```
