@@ -4,15 +4,16 @@ output: html_notebook
 ---
 
 ```{r}
-# install.packages('reshape','psych','factoextra')
 library(factoextra)
 library(psych)
 library(reshape)
 library(ggplot2)
 library(dplyr)
 library(tidyr)
-library(reshape)
-library(glmnet)
+
+library(nnet)
+library(caret)
+library(gbm)
 ```
 
 ```{r}
@@ -59,12 +60,12 @@ pca_summary <- summary(df_pca)
 cumulative_varprop <- pca_summary$importance["Cumulative Proportion",]
 # Visual
 barplot(cumulative_varprop)
-abline(h=0.80, col = 'red', lty = 2)
+abline(h=0.90, col = 'red', lty = 2)
 title(main = "PCA explained variance ratio",
       xlab = "PCA components", ylab = "Variance Ratio")
 ```
 
-As observed, we generated 32 PCA components and 85% of the variance by PCA1 - PCA8. Since a large portion of our variance is observed in these components, we can now reduce the components into 8 and perform some analysis. It will be hard to include all the components since some of the them have low explained variance specially on the right most PCA's which may not be that significant.
+As observed, we generated 32 PCA components and \~90% of the variance by PC1 - PC10. Since a large portion of our variance is observed in these components, we can now reduce the components into 10 and perform some analysis. It will be hard to include all the components since some of the them have low explained variance specially on the right most PCA's which may not be that significant.
 
 ```{r}
 # PCA Loadings
@@ -72,7 +73,7 @@ pca_loadings <- data.frame(features=row.names(df_pca$rotation),df_pca$rotation)
 
 pca_reduced <- 
   melt(pca_loadings,id=c("features")) %>%
-    filter(variable %in% paste0('PC',1:8)) %>%
+    filter(variable %in% paste0('PC',1:10)) %>%
     group_by(variable) %>%
     top_n(5,abs(value)) %>% 
     ungroup() %>%
@@ -97,25 +98,38 @@ pca_reduced[pca_reduced$variable %in% c("PC5","PC6","PC7","PC8"),] %>%
   labs(x=NULL)
 ```
 
+```{r}
+pca_reduced[pca_reduced$variable %in% c("PC9","PC10"),] %>%
+  ggplot(aes(x=abs(value),y=features,fill=sign)) + 
+  geom_bar(stat='identity') +
+  facet_wrap(~variable, scales='free_y') +
+  theme_classic() +
+  labs(x=NULL)
+```
+
 We limit the loadings of each principal components to their top 5 loading values (abs(value)) for interpretability of principal components.
 
 **Results:**
 
--   PCA1 - In contrast of *low* values of social media engagement and advertising to *high* unemployment rate, economic rate, and average income.
+-   PC1 - In contrast of *low* values of social media engagement and advertising to *high* unemployment rate, economic rate, and average income.
 
--   PCA2 - *low* values of features related to holistic employment growth and competitor factors.
+-   PC2 - *low* values of features related to holistic employment growth and competitor factors.
 
--   PCA3 - *high* values of features related to employee growth and weather conditions.
+-   PC3 - *high* values of features related to employee growth and weather conditions.
 
--   PCA4 - *high* values of features related to competitor factors and weather conditions.
+-   PC4 - *high* values of features related to competitor factors and weather conditions.
 
--   PCA5 - In contrast of *high* values for inventory turnover, staff turn over and order processing time to *low* values of restaurant's value for money and promos.
+-   PC5 - In contrast of *high* values for inventory turnover, staff turn over and order processing time to *low* values of restaurant's value for money and promos.
 
--   PCA6 - *high* values for variety of products (ie. vegetarian) and accessibility.
+-   PC6 - *high* values for variety of products (ie. vegetarian) and accessibility.
 
--   PCA7 - In contrast of *low* values for unemployment & economic growth rate, and average income to variety of products including seasonality.
+-   PC7 - In contrast of *low* values for unemployment & economic growth rate, and average income to variety of products including seasonality.
 
--   PCA8 - In contrast of *low* values of variety of products together with seasonal promos to *high* employee satisfactory performance/growth.
+-   PC8 - In contrast of *low* values of variety of products together with seasonal promos to *high* employee satisfactory performance/growth.
+
+-   PC9 - *low* values of restaurant strategy, value and customer satisfaction
+
+-   PC10 - In contrast of *high* values of inventory/food order time to low customer satisfaction.
 
 ## Association with income/rating
 
@@ -123,11 +137,13 @@ Now we interpret each PC's, we can now associate it to income or rating by using
 
 ```{r}
 # Filtering to PC1-8
-reduced_col <- c("PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8")
+reduced_col <- c("PC1","PC2","PC3","PC4","PC5","PC6","PC7","PC8","PC9","PC10")
 pca_components <- df_pca[['x']][, colnames(df_pca[['x']]) %in% reduced_col]
 
 df_pca_lm <- data.frame(df[,c("income","star_ratings")],pca_components)
 ```
+
+### Income
 
 ```{r}
 # Linear Reg - PCs (Income)
@@ -139,4 +155,146 @@ Interpretation:
 
 -   PC3 having the highest estimate (+ coefficient) means that this principal component which relates to employee growth and weather conditions has the most increasing effect on average on the income of the restaurant. PC6 which relates to restaurant's variety of products and accessibility gave us also a large increasing effect on income next to PC3. Basically, these two PC's estimates contributes large in the increase of income on average.
 
--   PC2, PC4, and PC7 having a large contribution on lowest estimate impacts the decreasing income of restaurant on average. PC2 and PC4 relates to poor quality of employee growth/competitor factors and extreme weather events/competitor factors. On the other hand, PC7 relates to combination of low unemployment/economic growth rate and good variety of products of the restaurant.
+-   PC2, PC4, PC7 and PC9 having a large contribution on lowest estimate impacts the decreasing income of restaurant on average. PC2 and PC4 relates to poor quality of employee growth/competitor factors and extreme weather events/competitor factors. On the other hand, PC7 relates to combination of low unemployment/economic growth rate and good variety of products of the restaurant, and PC9 relates to poor restaurant strategy, value and customer satisfaction.
+
+If we are to use this in prediction...
+
+**Cross-Validation**
+
+```{r}
+# K-fold = 5
+set.seed(77)
+pca_reg_cv <- train(data=df_pca_lm[,-2], income ~ .,
+                    trControl = trainControl(method = 'cv', number = 5),
+                    method = 'lm')
+
+pca_reg_cv$results
+
+```
+
+### Rating
+
+```{r}
+# GLM - PCs (Rating)
+pca_log <- multinom(data=df_pca_lm[,-1], formula = factor(star_ratings) ~ .)
+summary(pca_log)
+```
+
+**Cross-Validation**
+
+```{r}
+set.seed(77)
+pca_log_cv <- train(data=df_pca_lm[,-1], factor(star_ratings) ~ .,
+                    trControl = trainControl(method = 'cv', number = 5),
+                    method = 'multinom')
+
+pca_log_cv$results
+```
+
+### **Insights:**
+
+-   Cross-validated results of predicting income using principal component's gave as good results i terms of root-mean-squared error \~ PHP 21 (in 10k PHP)
+
+-   Cross-validated results of predicting star ratings using principal component's in multinomial logistic regression gave us classification accuracy \~ 74% which is decent but it can still be improved
+
+Moving forward, we will explore more options on how we can improve prediction accuracy of predicting income and star ratings of restaurants.
+
+## Model options for high dimensional data
+
+### Gradient Boosted Trees
+
+```{r}
+# Using the same scaled data
+df_scaled <- data.frame(df[,c("income","star_ratings")],df_scaled)
+
+
+```
+
+```{r}
+# Parameters
+
+parameters <- expand.grid(
+              n.trees = c(80,150),
+              shrinkage = c(0.05,0.10,0.15),
+              interaction.depth = c(5,7,9),
+              n.minobsinnode = c(5,10)
+            )
+```
+
+#### Income
+
+```{r}
+set.seed(77)
+gbm_regression <- train(
+                      data = df_scaled[,-2],
+                      income ~ .,
+                      method = 'gbm',
+                      trControl = trainControl(method = 'cv', number=5),
+                      tuneGrid = parameters,
+                      metric = 'RMSE',
+                      verbose = FALSE
+                    )
+gbm_regression 
+```
+
+RMSE \~ PHP 31.11696 of optimal model
+
+#### Rating
+
+```{r}
+
+set.seed(77)
+gbm_classification <- train(
+                      data = df_scaled[,-1],
+                      factor(star_ratings) ~ .,
+                      method = 'gbm',
+                      trControl = trainControl(method = 'cv', number=5),
+                      tuneGrid = parameters,
+                      metric = 'Accuracy',
+                      verbose = FALSE
+                    )
+gbm_classification
+```
+
+Accuracy \~ 72.90% of optimal model
+
+### Support Vector Machines
+
+Using Linear Kernel for SVM since it is a high-dimensional data.
+
+#### Income
+
+```{r}
+set.seed(77)
+
+svm_regression <- train(
+                  data = df_scaled[,-2],
+                  income ~ .,
+                  method = 'svmLinear',
+                  trControl = trainControl(method = 'cv', number=5),
+                  tuneGrid = expand.grid(C = c(seq(0.001, 3, length = 8),
+                                               seq(5, 120, length = 5))),
+                  metric = 'RMSE',
+                  verbose = FALSE
+                )
+svm_regression
+```
+
+#### Rating
+
+```{r}
+svm_classification <- train(
+                  data = df_scaled[,-1],
+                  factor(star_ratings) ~ .,
+                  method = 'svmLinear',
+                  trControl = trainControl(method = 'cv', number=5),
+                  tuneGrid = expand.grid(C = c(seq(0.001, 3, length = 8),
+                                               seq(5, 120, length = 5))),
+                  metric = 'Accuracy',
+                  verbose = FALSE
+                )
+svm_classification
+
+```
+
+GBM and SVM (Linear) models do have relative performance on the Linear Regression model we built earlier using principal components as features. Linear Regression with PCs as features performs better by a miniscule amount.
