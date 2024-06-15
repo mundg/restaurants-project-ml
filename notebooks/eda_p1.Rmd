@@ -258,6 +258,26 @@ gbm_classification
 
 Accuracy \~ 72.90% of optimal model
 
+Using Reduced Features (Based on EDA_p2 file)
+
+```{r}
+set.seed(77)
+gbm_classification <- train(
+                      data = df_scaled[,!(colnames(df_scaled) %in% 
+                                         c("income","local_unemployment_rate",
+                                           "order_processing_time","complaint_rate",
+                                           "repeat_customers", "experience_years"))],
+                      factor(star_ratings) ~ .,
+                      method = 'gbm',
+                      trControl = trainControl(method = 'cv', number=5),
+                      tuneGrid = parameters,
+                      metric = 'Accuracy',
+                      verbose = FALSE
+                    )
+gbm_classification
+
+```
+
 ### Support Vector Machines
 
 Using Linear Kernel for SVM since it is a high-dimensional data.
@@ -295,6 +315,25 @@ svm_classification <- train(
                 )
 svm_classification
 
+```
+
+Using Reduced Features for Rating Classification (Based on eda_p2 file)
+
+```{r}
+svm_classification <- train(
+                  data = df_scaled[,!(colnames(df_scaled) %in% 
+                                         c("income","local_unemployment_rate",
+                                           "order_processing_time","complaint_rate",
+                                           "repeat_customers", "experience_years"))],
+                  factor(star_ratings) ~ .,
+                  method = 'svmLinear',
+                  trControl = trainControl(method = 'cv', number=5),
+                  tuneGrid = expand.grid(C = c(seq(0.001, 3, length = 8),
+                                               seq(5, 120, length = 5))),
+                  metric = 'Accuracy',
+                  verbose = FALSE
+                )
+svm_classification
 ```
 
 GBM and SVM (Linear) models do have relative performance on the Linear Regression model we built earlier using principal components as features. Linear Regression with PCs as features performs better by a miniscule amount.
